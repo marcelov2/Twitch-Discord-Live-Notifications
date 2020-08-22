@@ -18,5 +18,5 @@ I host this on [repl.it](https://repl.it/), but anywhere that supports NodeJS sh
 1. Run the Repl app
 
 ## Usage
-* [Your Repl URL]/a/[Your Passcode]/[Twitch Username] (e.g. https://twitch.amazing.repl.co/a/pa55word/brofar) -> Adds a user to the watch list
-* [Your Repl URL]/d/[Your Passcode]/[Twitch Username] (e.g. https://twitch.amazing.repl.co/d/pa55word/brofar) -> Removes a user from the watch list
+* **[Your Repl URL]/a/[Your Passcode]/[Twitch Username]** Adds a user to the watch list *(e.g. https://twitch.amazing.repl.co/a/pa55word/brofar)*
+* **[Your Repl URL]/d/[Your Passcode]/[Twitch Username]** Removes a user from the watch list *(e.g. https://twitch.amazing.repl.co/d/pa55word/brofar)*
