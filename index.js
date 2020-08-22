@@ -20,7 +20,6 @@ const hubSecret = process.env.HUB_SECRET;
 const passcode = process.env.PASSCODE;
 const authUrl = 'https://id.twitch.tv/oauth2';
 const apiUrl = 'https://api.twitch.tv/helix';
-const streamers = require("./streamers.js");
 
 // register remote methods for the rest client
 // to make life easier later in the code
