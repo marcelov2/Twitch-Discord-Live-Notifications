@@ -20,6 +20,7 @@ const hubSecret = process.env.HUB_SECRET;
 const passcode = process.env.PASSCODE;
 const authUrl = 'https://id.twitch.tv/oauth2';
 const apiUrl = 'https://api.twitch.tv/helix';
+var api_token;
 
 // register remote methods for the rest client
 // to make life easier later in the code
@@ -29,6 +30,7 @@ rest.registerMethod("TwitchRevokeToken", `${authUrl}/revoke`, "POST");
 rest.registerMethod("TwitchGetWebhookSub", `${apiUrl}/webhooks/subscriptions`, "GET");
 rest.registerMethod("TwitchPostWebhookSub", `${apiUrl}/webhooks/hub`, "POST");
 rest.registerMethod("TwitchGetUser", apiUrl + '/users?${users}', "GET"); // Yeah this one's weird.
+rest.registerMethod("TwitchGames", `${apiUrl}/games`, "GET");
 rest.registerMethod("DiscordSendPayload", discordWebhook, "POST");
 
 // Get a list of streamers
@@ -83,24 +85,33 @@ function AddStreamerToDb(username) {
 }
 
 // Authenticate with Twitch
-function GetTwitchToken () {
+async function GetTwitchToken() {
+  var currentToken = api_token;
+  var isCurrentTokenValid = await ValidateTwitchToken(currentToken);
+  
   return new Promise(function(resolve, reject) {
-    var args = {
-      parameters:{
-        "client_id":twitchClient, 
-        "client_secret":twitchSecret,
-        "grant_type":"client_credentials"
-      },
-    };
-    rest.methods.TwitchAuthenticate(args, function (data, response) {
-      if(IsStatusOkay(response.statusCode)) resolve(data.access_token);
-      reject(Error(data.message));
-    });
+    if(isCurrentTokenValid) {
+      resolve(currentToken);
+    } else {
+      var args = {
+        parameters:{
+          "client_id":twitchClient, 
+          "client_secret":twitchSecret,
+          "grant_type":"client_credentials"
+        }
+      };
+      rest.methods.TwitchAuthenticate(args, function (data, response) {
+        console.log(`Got Token ${data.access_token}`);
+        api_token = data.access_token;
+        if(IsStatusOkay(response.statusCode)) resolve(data.access_token);
+        reject(Error(data.message));
+      });
+    }
   });
 }
 
 // Validate Twitch token
-function ValidateTwitchToken (token) {
+async function ValidateTwitchToken (token) {
   return new Promise(function(resolve, reject) {
     var args = {
       headers: { 
@@ -218,6 +229,29 @@ function GetUserIds(usernames, token) {
   });
 }
 
+// Get Twitch Game
+async function GetTwitchGameById (gameId, token) {
+  return new Promise(function(resolve, reject) {
+    var args = {
+      headers: { 
+        "Authorization": `Bearer ${token}`,
+        "Client-ID": twitchClient
+      },
+      parameters: {
+        id: gameId
+      }
+    };
+    rest.methods.TwitchGames(args, function (data, response) {
+      if(IsStatusOkay(response.statusCode)) {
+        var gameData = data.data.shift();
+        console.log(`${gameId} = ${gameData.name}`);
+        resolve(gameData.name);
+      } 
+      reject(Error(data.message));
+    });
+  });
+}
+
 // Create Twitch webhook subscription given
 // a user ID
 function SubscribeToTwitch (userId, token, unsub = false) {
@@ -274,12 +308,11 @@ async function RefreshWebhooks() {
     console.log(streamers);
 
     var bearerToken = await GetTwitchToken();
-    console.log(`Got Token ${bearerToken}`);
 
     await CheckForWebhookSubscription(streamers, bearerToken);
 
-    await RevokeTwitchToken(bearerToken);
-    console.log(`Token ${bearerToken} revoked.`);
+    //await RevokeTwitchToken(bearerToken);
+    //console.log(`Token ${bearerToken} revoked.`);
 }
 
 // Remove a streamer from the webhook list
@@ -290,7 +323,6 @@ async function RemoveStreamer(username) {
   if(!streamers.includes(username)) return;
 
   var bearerToken = await GetTwitchToken();
-  console.log(`Got Token ${bearerToken}`);
 
   var userIds = await GetUserIds([username], bearerToken);
   console.log(`UserId: ${userIds}`);
@@ -298,24 +330,24 @@ async function RemoveStreamer(username) {
   await SubscribeToTwitch(userIds[0], bearerToken, true)
     .catch(error => {console.error(error)});
 
-  await RevokeTwitchToken(bearerToken);
-  console.log(`Token ${bearerToken} revoked.`);
+  //await RevokeTwitchToken(bearerToken);
+  //console.log(`Token ${bearerToken} revoked.`);
 
   await RemoveStreamerFromDb(username);
   console.log(`Removed ${username} removed from DB.`);
 }
 
 // Send a payload to discord webhook
-function SendToDiscord (username) {
+function SendToDiscord (msg) {
   return new Promise(function(resolve, reject) {
-    console.log(`Telling discord that ${username} is live`);
+    console.log(`Telling discord: ${msg}`);
 
     var args = {
       headers: {
         "Content-Type": "application/json"
       },
       data: {
-        "content": `${username} is live. https://twitch.tv/${username}`
+        "content": msg
       }
     };
     rest.methods.DiscordSendPayload(args, function (data, response) {
@@ -333,9 +365,18 @@ function IsStatusOkay(statusCode) {
 
 // Webhook handler
 async function TwitchWebhook(payload) {
-  console.log(`${payload.user_name} is live`);
+  console.log(`${payload.user_name} is live with game id ${payload.game_id}`);
+
+  // game_id CAN be blank.
+  if(payload.game_id != "") {
+    var token = await GetTwitchToken();
+    var game = await GetTwitchGameById (payload.game_id, token);
+    var msg = `${payload.user_name} is streaming ${game}. <https://twitch.tv/${payload.user_name}>`;
+  } else {
+    var msg = `${payload.user_name} is live. <https://twitch.tv/${payload.user_name}>`;
+  }
   
-  await SendToDiscord (payload.user_name);
+  SendToDiscord (msg);
 }
 
 // Accept Challenge
@@ -415,8 +456,10 @@ app.post('/webhook', (req, res) => {
   // We still get a webhook when a streamer
   // ends their stream (it's an empty array)
   // but we don't want to do process that
-  if(body.length > 0 && body[0].type == 'live')
+  if(body.length > 0 && body[0].type == 'live') {
     TwitchWebhook(body[0]);
+  }
+    
   res.status(200).send("OK");
 });
 
